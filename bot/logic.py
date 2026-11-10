@@ -119,7 +119,6 @@ def cmd_link(api, db, cfg, chat_id, uid, user, args):
         return
 
     rows = [[(f"🖥 {s['name']}", f"link:{s['id']}")] for s in servers]
-    rows.append([("🎲 Casuale", "link:random")])
     api.send_message(chat_id, "Da quale server vuoi il link?", reply_markup=inline_keyboard(rows))
 
 
