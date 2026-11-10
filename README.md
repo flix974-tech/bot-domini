@@ -86,8 +86,7 @@ Nota: polling e webhook sono mutuamente esclusivi. Dopo i test locali, riapri
 ## Struttura
 ```
 api/
-  webhook.py       # endpoint che Telegram chiama (POST)
-  set_webhook.py   # registra il webhook (apri una volta nel browser)
+  index.py         # entrypoint unico: POST /api/webhook e GET /api/set_webhook
 bot/
   config.py        # variabili d'ambiente
   db.py            # Postgres
@@ -96,8 +95,8 @@ bot/
   utils.py         # sottodomini / URL
   main.py          # runner locale (polling)
 nginx.example.conf # esempio reverse proxy sul server di origine
-vercel.json
-requirements.txt
+pyproject.toml     # dipendenze + entrypoint Vercel
+requirements.txt   # per lo sviluppo locale
 ```
 
 ## Sicurezza

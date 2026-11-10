@@ -1,0 +1,12 @@
+[project]
+name = "bot-domini"
+version = "0.1.0"
+description = "Bot Telegram per link di sessione multi-server"
+requires-python = ">=3.9"
+dependencies = [
+    "psycopg2-binary==2.9.9",
+]
+
+# Dice a Vercel qual è l'unico entrypoint della funzione Python.
+[tool.vercel]
+entrypoint = "api.index:handler"
