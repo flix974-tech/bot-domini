@@ -45,7 +45,7 @@ def _handle_message(msg: dict, api: TelegramAPI, db: Database, cfg: Config) -> N
 
 
 def _is_admin(cfg: Config, uid: int) -> bool:
-    return uid == cfg.superadmin_id
+    return cfg.is_admin(uid)
 
 
 def _admin_only(fn):
@@ -87,7 +87,8 @@ def _notify_admin_new_request(api, cfg, uid, username, first_name):
         f"ID: {uid}"
     )
     kb = inline_keyboard([[("✅ Accetta", f"approve:{uid}"), ("❌ Rifiuta", f"reject:{uid}")]])
-    api.send_message(cfg.superadmin_id, text, reply_markup=kb)
+    for admin_id in cfg.superadmin_ids:
+        api.send_message(admin_id, text, reply_markup=kb)
 
 
 # ---------------- /link ----------------
@@ -153,7 +154,7 @@ def cmd_pending(api, db, cfg, chat_id, uid, user, args):
         kb = inline_keyboard([[("✅ Accetta", f"approve:{r['telegram_id']}"),
                                ("❌ Rifiuta", f"reject:{r['telegram_id']}")]])
         api.send_message(
-            cfg.superadmin_id,
+            chat_id,
             f"In attesa:\nNome: {r['first_name'] or '-'}\nUsername: {uname}\nID: {r['telegram_id']}",
             reply_markup=kb,
         )
@@ -315,7 +316,7 @@ def _handle_callback(cb: dict, api: TelegramAPI, db: Database, cfg: Config) -> N
     cb_id = cb.get("id")
     data = cb.get("data") or ""
 
-    if from_user.get("id") != cfg.superadmin_id:
+    if not cfg.is_admin(from_user.get("id")):
         api.answer_callback_query(cb_id, "Non autorizzato", show_alert=True)
         return
     api.answer_callback_query(cb_id)

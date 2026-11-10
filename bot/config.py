@@ -14,11 +14,19 @@ except Exception:  # dotenv assente in produzione (Vercel) va bene
 @dataclass(frozen=True)
 class Config:
     bot_token: str
-    superadmin_id: int
+    superadmin_ids: tuple[int, ...]
     database_url: str
     link_scheme: str
     subdomain_length: int
     webhook_secret: str
+
+    @property
+    def superadmin_id(self) -> int:
+        """Primo superadmin (compatibilità)."""
+        return self.superadmin_ids[0]
+
+    def is_admin(self, uid: int) -> bool:
+        return uid in self.superadmin_ids
 
 
 def _first_env(*names: str) -> str:
@@ -34,9 +42,14 @@ def load_config() -> Config:
     if not bot_token:
         raise RuntimeError("BOT_TOKEN non impostato")
 
-    raw_admin = os.getenv("SUPERADMIN_ID", "").strip()
-    if not raw_admin.isdigit():
-        raise RuntimeError("SUPERADMIN_ID deve essere il tuo user ID Telegram numerico")
+    # Uno o più superadmin: ID separati da virgola (o spazio).
+    # Accetta sia SUPERADMIN_ID che SUPERADMIN_IDS.
+    raw_admin = _first_env("SUPERADMIN_ID", "SUPERADMIN_IDS")
+    admin_ids = tuple(
+        int(tok) for tok in raw_admin.replace(",", " ").split() if tok.isdigit()
+    )
+    if not admin_ids:
+        raise RuntimeError("SUPERADMIN_ID deve contenere almeno un user ID Telegram numerico")
 
     # Vercel Postgres inietta POSTGRES_URL; accettiamo anche DATABASE_URL.
     database_url = _first_env("POSTGRES_URL", "DATABASE_URL", "POSTGRES_PRISMA_URL")
@@ -55,7 +68,7 @@ def load_config() -> Config:
 
     return Config(
         bot_token=bot_token,
-        superadmin_id=int(raw_admin),
+        superadmin_ids=admin_ids,
         database_url=database_url,
         link_scheme=scheme,
         subdomain_length=sub_len,

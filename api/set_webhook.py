@@ -22,8 +22,9 @@ class handler(BaseHTTPRequestHandler):
         qs = urllib.parse.urlparse(self.path).query
         params = urllib.parse.parse_qs(qs)
 
-        # Protezione minima: ?key=<il tuo SUPERADMIN_ID>
-        if params.get("key", [""])[0] != str(cfg.superadmin_id):
+        # Protezione minima: ?key=<uno dei tuoi SUPERADMIN_ID>
+        key = params.get("key", [""])[0]
+        if not key.isdigit() or int(key) not in cfg.superadmin_ids:
             self.send_response(403)
             self.end_headers()
             self.wfile.write(b"forbidden: aggiungi ?key=<SUPERADMIN_ID>")

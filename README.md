@@ -56,7 +56,7 @@ Vercel → progetto → **Settings → Environment Variables**, aggiungi:
 | Nome | Valore |
 |---|---|
 | `BOT_TOKEN` | il token di BotFather |
-| `SUPERADMIN_ID` | il tuo user ID Telegram |
+| `SUPERADMIN_ID` | il tuo user ID Telegram (più admin: `111,222,333`) |
 | `WEBHOOK_SECRET` | una stringa a caso a tua scelta |
 | `LINK_SCHEME` | `http` (o `https`) |
 
