@@ -4,28 +4,44 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:  # dotenv assente in produzione (Vercel) va bene
+    pass
 
 
 @dataclass(frozen=True)
 class Config:
     bot_token: str
     superadmin_id: int
-    db_path: str
+    database_url: str
     link_scheme: str
     subdomain_length: int
+    webhook_secret: str
+
+
+def _first_env(*names: str) -> str:
+    for n in names:
+        v = os.getenv(n)
+        if v:
+            return v.strip()
+    return ""
 
 
 def load_config() -> Config:
     bot_token = os.getenv("BOT_TOKEN", "").strip()
     if not bot_token:
-        raise SystemExit("ERRORE: BOT_TOKEN non impostato (vedi .env.example)")
+        raise RuntimeError("BOT_TOKEN non impostato")
 
     raw_admin = os.getenv("SUPERADMIN_ID", "").strip()
     if not raw_admin.isdigit():
-        raise SystemExit("ERRORE: SUPERADMIN_ID deve essere il tuo user ID Telegram numerico")
+        raise RuntimeError("SUPERADMIN_ID deve essere il tuo user ID Telegram numerico")
+
+    # Vercel Postgres inietta POSTGRES_URL; accettiamo anche DATABASE_URL.
+    database_url = _first_env("POSTGRES_URL", "DATABASE_URL", "POSTGRES_PRISMA_URL")
+    if not database_url:
+        raise RuntimeError("Nessuna connessione Postgres (POSTGRES_URL / DATABASE_URL)")
 
     scheme = os.getenv("LINK_SCHEME", "http").strip().lower()
     if scheme not in ("http", "https"):
@@ -40,7 +56,8 @@ def load_config() -> Config:
     return Config(
         bot_token=bot_token,
         superadmin_id=int(raw_admin),
-        db_path=os.getenv("DB_PATH", "data/bot.db").strip() or "data/bot.db",
+        database_url=database_url,
         link_scheme=scheme,
         subdomain_length=sub_len,
+        webhook_secret=os.getenv("WEBHOOK_SECRET", "").strip(),
     )
