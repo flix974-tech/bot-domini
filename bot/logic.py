@@ -208,6 +208,21 @@ def _extract_credentials(token: str) -> tuple[str, str]:
     return username, password
 
 
+def _send_clean(api, db, cfg, chat_id, uid, user, server_id, username, password):
+    """Genera il link sul server scelto e invia i dati puliti (tap-to-copy)."""
+    url, err = _make_link(db, cfg, uid, user, server_id)
+    if err:
+        api.send_message(chat_id, err)
+        return
+    parts = [_md2("Dati puliti (tocca per copiare):"), ""]
+    parts.append(f"🔗 Link: `{_md2_code(url)}`")
+    if username:
+        parts.append(f"👤 Utente: `{_md2_code(username)}`")
+    if password:
+        parts.append(f"🔑 Password: `{_md2_code(password)}`")
+    api.send_message(chat_id, "\n".join(parts), parse_mode="MarkdownV2")
+
+
 def handle_clean_url(text, api, db, cfg, chat_id, uid, user):
     """Riceve un URL con credenziali, le estrae e genera un nuovo link pulito."""
     if not _is_admin(cfg, uid) and not db.is_approved(uid):
@@ -219,18 +234,18 @@ def handle_clean_url(text, api, db, cfg, chat_id, uid, user):
     if not username and not password:
         return  # non è un link con credenziali: ignora
 
-    url, err = _make_link(db, cfg, uid, user, None)
-    if err:
-        api.send_message(chat_id, err)
+    servers = _available_servers(db, cfg, uid)
+
+    # Più server disponibili: fai scegliere con i pulsanti.
+    if len(servers) > 1:
+        db.set_pending_clean(uid, username, password)
+        rows = [[(f"🖥 {s['name']}", f"clean:{s['id']}")] for s in servers]
+        api.send_message(chat_id, "Da quale server vuoi il link?", reply_markup=inline_keyboard(rows))
         return
 
-    parts = [_md2("Dati puliti (tocca per copiare):"), ""]
-    parts.append(f"🔗 Link: `{_md2_code(url)}`")
-    if username:
-        parts.append(f"👤 Utente: `{_md2_code(username)}`")
-    if password:
-        parts.append(f"🔑 Password: `{_md2_code(password)}`")
-    api.send_message(chat_id, "\n".join(parts), parse_mode="MarkdownV2")
+    # Un solo server (o nessuno): automatico.
+    server_id = servers[0]["id"] if servers else None
+    _send_clean(api, db, cfg, chat_id, uid, user, server_id, username, password)
 
 
 def cmd_miei(api, db, cfg, chat_id, uid, user, args):
@@ -431,6 +446,21 @@ def _handle_callback(cb: dict, api: TelegramAPI, db: Database, cfg: Config) -> N
         api.answer_callback_query(cb_id)
         server_id = None if rest == "random" else (int(rest) if rest.isdigit() else None)
         _generate_and_send_link(api, db, cfg, msg_chat, uid, from_user, server_id)
+        return
+
+    # Pulsanti "scegli server" dopo aver incollato un URL con credenziali.
+    if action == "clean":
+        if not _is_admin(cfg, uid) and not db.is_approved(uid):
+            api.answer_callback_query(cb_id, "Non sei abilitato", show_alert=True)
+            return
+        api.answer_callback_query(cb_id)
+        pend = db.get_pending_clean(uid)
+        if not pend:
+            api.send_message(msg_chat, "Sessione scaduta: reincolla l'URL con le credenziali.")
+            return
+        server_id = int(rest) if rest.isdigit() else None
+        db.clear_pending_clean(uid)
+        _send_clean(api, db, cfg, msg_chat, uid, from_user, server_id, pend["username"], pend["password"])
         return
 
     # Pulsanti Accetta/Rifiuta: solo superadmin.

@@ -49,6 +49,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at    TIMESTAMPTZ NOT NULL,
     UNIQUE(domain_id, subdomain)
 );
+
+-- Credenziali in attesa mentre l'utente sceglie il server (usa-e-getta).
+CREATE TABLE IF NOT EXISTS pending_clean (
+    user_id       BIGINT PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
+    username      TEXT,
+    password      TEXT,
+    created_at    TIMESTAMPTZ NOT NULL
+);
 """
 
 # Crea lo schema una sola volta per container (cold start).
@@ -245,6 +253,28 @@ class Database:
                 (user_id, domain_id, subdomain, full_url, _now()),
             )
             return int(cur.fetchone()["id"])
+
+    # ---------------- Credenziali in attesa (clean) ----------------
+    def set_pending_clean(self, user_id: int, username: str, password: str) -> None:
+        # Assicura la riga utente per la FK.
+        self.ensure_user(user_id, None, None, approved=False)
+        with self._cur() as cur:
+            cur.execute(
+                "INSERT INTO pending_clean (user_id, username, password, created_at) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (user_id) DO UPDATE SET "
+                "username = EXCLUDED.username, password = EXCLUDED.password, created_at = EXCLUDED.created_at",
+                (user_id, username, password, _now()),
+            )
+
+    def get_pending_clean(self, user_id: int) -> Optional[dict]:
+        with self._cur() as cur:
+            cur.execute("SELECT * FROM pending_clean WHERE user_id = %s", (user_id,))
+            return cur.fetchone()
+
+    def clear_pending_clean(self, user_id: int) -> None:
+        with self._cur() as cur:
+            cur.execute("DELETE FROM pending_clean WHERE user_id = %s", (user_id,))
 
     def list_sessions(self, user_id: Optional[int] = None, limit: int = 50) -> list[dict]:
         with self._cur() as cur:
