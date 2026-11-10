@@ -27,7 +27,8 @@ class TelegramAPI:
             return None
 
     # --- invio messaggi ---
-    def send_message(self, chat_id: int, text: str, reply_markup: Optional[dict] = None) -> Optional[dict]:
+    def send_message(self, chat_id: int, text: str, reply_markup: Optional[dict] = None,
+                     parse_mode: Optional[str] = None) -> Optional[dict]:
         payload: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
@@ -35,6 +36,8 @@ class TelegramAPI:
         }
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         return self._call("sendMessage", payload)
 
     def edit_message_text(self, chat_id: int, message_id: int, text: str) -> Optional[dict]:

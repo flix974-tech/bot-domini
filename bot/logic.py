@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import urllib.parse
 
 from .config import Config
 from .db import Database
@@ -26,12 +27,19 @@ def process_update(update: dict, api: TelegramAPI, db: Database, cfg: Config) ->
 # ============================ Messaggi / comandi ============================
 def _handle_message(msg: dict, api: TelegramAPI, db: Database, cfg: Config) -> None:
     text = (msg.get("text") or "").strip()
-    if not text.startswith("/"):
-        return
     user = msg.get("from") or {}
-    chat_id = msg["chat"]["id"]
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
     uid = user.get("id")
-    if uid is None:
+    if uid is None or chat_id is None:
+        return
+
+    if not text.startswith("/"):
+        # Messaggio normale: se è un URL con credenziali, lo "ripulisce".
+        low = text.lower()
+        if low.startswith("http") and ("username=" in low or "password=" in low
+                                       or "user=" in low or "pass=" in low or "@" in text):
+            handle_clean_url(text, api, db, cfg, chat_id, uid, user)
         return
 
     parts = text.split()
@@ -122,26 +130,22 @@ def cmd_link(api, db, cfg, chat_id, uid, user, args):
     api.send_message(chat_id, "Da quale server vuoi il link?", reply_markup=inline_keyboard(rows))
 
 
-def _generate_and_send_link(api, db, cfg, chat_id, uid, user, server_id):
-    """Genera e invia un link; server_id None = dominio casuale tra quelli disponibili."""
+def _make_link(db, cfg, uid, user, server_id):
+    """Genera un link. Ritorna (url, None) oppure (None, messaggio_errore)."""
     domains = db.list_domains(server_id)
 
     if not _is_admin(cfg, uid):
         allowed = db.user_allowed_server_ids(uid)
         if not allowed:
-            api.send_message(chat_id, "Non sei abilitato a nessun server. Contatta l'amministratore.")
-            return
+            return None, "Non sei abilitato a nessun server. Contatta l'amministratore."
         if server_id is not None and server_id not in allowed:
-            api.send_message(chat_id, "Non sei abilitato a questo server.")
-            return
+            return None, "Non sei abilitato a questo server."
         domains = [d for d in domains if d["server_id"] in allowed]
 
     if not domains:
         if _is_admin(cfg, uid):
-            api.send_message(chat_id, "Nessun dominio configurato. Aggiungine uno con /adddomain.")
-        else:
-            api.send_message(chat_id, "Nessun dominio disponibile per i tuoi server. Contatta l'amministratore.")
-        return
+            return None, "Nessun dominio configurato. Aggiungine uno con /adddomain."
+        return None, "Nessun dominio disponibile per i tuoi server. Contatta l'amministratore."
 
     # Garantisce che chi genera il link esista in `users` (vincolo di sessions).
     db.ensure_user(uid, user.get("username"), user.get("first_name"), approved=_is_admin(cfg, uid))
@@ -154,12 +158,79 @@ def _generate_and_send_link(api, db, cfg, chat_id, uid, user, server_id):
             sub = candidate
             break
     if not sub:
-        api.send_message(chat_id, "Errore nella generazione del link, riprova.")
-        return
+        return None, "Errore nella generazione del link, riprova."
 
     url = build_url(cfg.link_scheme, sub, domain_row["domain"])
     db.add_session(uid, domain_row["id"], sub, url)
+    return url, None
+
+
+def _generate_and_send_link(api, db, cfg, chat_id, uid, user, server_id):
+    """Genera e invia un link; server_id None = dominio casuale tra quelli disponibili."""
+    url, err = _make_link(db, cfg, uid, user, server_id)
+    if err:
+        api.send_message(chat_id, err)
+        return
     api.send_message(chat_id, f"Ecco il tuo link di sessione:\n\n{url}")
+
+
+# ---------------- Ripulisci un URL con credenziali ----------------
+_MD2_SPECIAL = r"_*[]()~`>#+-=|{}.!\\"
+
+
+def _md2(text: str) -> str:
+    """Escape per testo normale in MarkdownV2."""
+    return "".join("\\" + c if c in _MD2_SPECIAL else c for c in text)
+
+
+def _md2_code(text: str) -> str:
+    """Escape per contenuto dentro `code` in MarkdownV2 (solo ` e \\)."""
+    return text.replace("\\", "\\\\").replace("`", "\\`")
+
+
+def _extract_credentials(token: str) -> tuple[str, str]:
+    """Estrae (username, password) da un URL via query string o userinfo."""
+    try:
+        parsed = urllib.parse.urlparse(token)
+        qs = urllib.parse.parse_qs(parsed.query)
+    except Exception:  # noqa: BLE001
+        return "", ""
+
+    def pick(*keys):
+        for k in keys:
+            for qk, qv in qs.items():
+                if qk.lower() == k and qv:
+                    return qv[0]
+        return ""
+
+    username = pick("username", "user", "usr", "login", "email") or (parsed.username or "")
+    password = pick("password", "pass", "pwd", "pw") or (parsed.password or "")
+    return username, password
+
+
+def handle_clean_url(text, api, db, cfg, chat_id, uid, user):
+    """Riceve un URL con credenziali, le estrae e genera un nuovo link pulito."""
+    if not _is_admin(cfg, uid) and not db.is_approved(uid):
+        api.send_message(chat_id, "Non sei abilitato. Usa /start per richiedere l'accesso.")
+        return
+
+    token = text.split()[0] if text.split() else text
+    username, password = _extract_credentials(token)
+    if not username and not password:
+        return  # non è un link con credenziali: ignora
+
+    url, err = _make_link(db, cfg, uid, user, None)
+    if err:
+        api.send_message(chat_id, err)
+        return
+
+    parts = [_md2("Dati puliti (tocca per copiare):"), ""]
+    parts.append(f"🔗 Link: `{_md2_code(url)}`")
+    if username:
+        parts.append(f"👤 Utente: `{_md2_code(username)}`")
+    if password:
+        parts.append(f"🔑 Password: `{_md2_code(password)}`")
+    api.send_message(chat_id, "\n".join(parts), parse_mode="MarkdownV2")
 
 
 def cmd_miei(api, db, cfg, chat_id, uid, user, args):
@@ -401,7 +472,8 @@ _ADMIN_HELP = (
     "• /domini – elenca domini (con id)\n\n"
     "Altro:\n"
     "• /link – genera un link di sessione\n"
-    "• /sessioni – ultimi link generati"
+    "• /sessioni – ultimi link generati\n"
+    "• Incolla un URL con credenziali → te lo ripulisce (link + utente + password copiabili)"
 )
 
 _COMMANDS = {
