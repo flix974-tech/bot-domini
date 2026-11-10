@@ -111,6 +111,23 @@ class Database:
             )
             return row["status"]
 
+    def ensure_user(self, telegram_id: int, username: Optional[str], first_name: Optional[str],
+                    approved: bool = False) -> None:
+        """Garantisce che l'utente esista in `users` (necessario per la FK di sessions).
+        Se `approved`, lo porta a stato 'approved' (usato per il superadmin)."""
+        with self._cur() as cur:
+            cur.execute("SELECT status FROM users WHERE telegram_id = %s", (telegram_id,))
+            row = cur.fetchone()
+            if row is None:
+                status = "approved" if approved else "pending"
+                cur.execute(
+                    "INSERT INTO users (telegram_id, username, first_name, status, created_at) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (telegram_id, username, first_name, status, _now()),
+                )
+            elif approved and row["status"] != "approved":
+                cur.execute("UPDATE users SET status = 'approved' WHERE telegram_id = %s", (telegram_id,))
+
     def set_user_status(self, telegram_id: int, status: str) -> None:
         with self._cur() as cur:
             cur.execute(

@@ -117,6 +117,10 @@ def cmd_link(api, db, cfg, chat_id, uid, user, args):
             api.send_message(chat_id, "Nessun dominio disponibile per i tuoi server. Contatta l'amministratore.")
         return
 
+    # Garantisce che chi genera il link esista in `users` (vincolo di sessions).
+    # Il superadmin potrebbe non essere ancora registrato: lo inseriamo come 'approved'.
+    db.ensure_user(uid, user.get("username"), user.get("first_name"), approved=_is_admin(cfg, uid))
+
     domain_row = secrets.choice(domains)
     sub = ""
     for _ in range(20):
