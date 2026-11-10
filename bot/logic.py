@@ -92,12 +92,39 @@ def _notify_admin_new_request(api, cfg, uid, username, first_name):
 
 
 # ---------------- /link ----------------
+def _available_servers(db, cfg, uid) -> list:
+    """Server utilizzabili dall'utente (con almeno un dominio)."""
+    servers = [s for s in db.list_servers() if db.list_domains(s["id"])]
+    if not _is_admin(cfg, uid):
+        allowed = db.user_allowed_server_ids(uid)
+        servers = [s for s in servers if s["id"] in allowed]
+    return servers
+
+
 def cmd_link(api, db, cfg, chat_id, uid, user, args):
     if not _is_admin(cfg, uid) and not db.is_approved(uid):
         api.send_message(chat_id, "Non sei abilitato. Usa /start per richiedere l'accesso.")
         return
 
-    server_id = int(args[0]) if args and args[0].isdigit() else None
+    # Con un numero (/link 2) genera subito da quel server.
+    if args and args[0].isdigit():
+        _generate_and_send_link(api, db, cfg, chat_id, uid, user, int(args[0]))
+        return
+
+    # Senza numero: mostra i pulsanti dei server disponibili.
+    servers = _available_servers(db, cfg, uid)
+    if not servers:
+        # Nessun server/dominio: delega al generatore che invia il messaggio giusto.
+        _generate_and_send_link(api, db, cfg, chat_id, uid, user, None)
+        return
+
+    rows = [[(f"🖥 {s['name']}", f"link:{s['id']}")] for s in servers]
+    rows.append([("🎲 Casuale", "link:random")])
+    api.send_message(chat_id, "Da quale server vuoi il link?", reply_markup=inline_keyboard(rows))
+
+
+def _generate_and_send_link(api, db, cfg, chat_id, uid, user, server_id):
+    """Genera e invia un link; server_id None = dominio casuale tra quelli disponibili."""
     domains = db.list_domains(server_id)
 
     if not _is_admin(cfg, uid):
@@ -118,7 +145,6 @@ def cmd_link(api, db, cfg, chat_id, uid, user, args):
         return
 
     # Garantisce che chi genera il link esista in `users` (vincolo di sessions).
-    # Il superadmin potrebbe non essere ancora registrato: lo inseriamo come 'approved'.
     db.ensure_user(uid, user.get("username"), user.get("first_name"), approved=_is_admin(cfg, uid))
 
     domain_row = secrets.choice(domains)
@@ -317,22 +343,35 @@ def cmd_sessioni(api, db, cfg, chat_id, uid, user, args):
 # ============================ Callback (pulsanti) ============================
 def _handle_callback(cb: dict, api: TelegramAPI, db: Database, cfg: Config) -> None:
     from_user = cb.get("from") or {}
+    uid = from_user.get("id")
     cb_id = cb.get("id")
     data = cb.get("data") or ""
-
-    if not cfg.is_admin(from_user.get("id")):
-        api.answer_callback_query(cb_id, "Non autorizzato", show_alert=True)
-        return
-    api.answer_callback_query(cb_id)
-
-    action, _, raw_uid = data.partition(":")
-    if not raw_uid.isdigit():
-        return
-    target = int(raw_uid)
     message = cb.get("message") or {}
     msg_chat = (message.get("chat") or {}).get("id")
     msg_id = message.get("message_id")
     base_text = message.get("text") or ""
+
+    action, _, rest = data.partition(":")
+
+    # Pulsanti "scegli server" di /link: li può usare qualunque utente abilitato.
+    if action == "link":
+        if not _is_admin(cfg, uid) and not db.is_approved(uid):
+            api.answer_callback_query(cb_id, "Non sei abilitato", show_alert=True)
+            return
+        api.answer_callback_query(cb_id)
+        server_id = None if rest == "random" else (int(rest) if rest.isdigit() else None)
+        _generate_and_send_link(api, db, cfg, msg_chat, uid, from_user, server_id)
+        return
+
+    # Pulsanti Accetta/Rifiuta: solo superadmin.
+    if not cfg.is_admin(uid):
+        api.answer_callback_query(cb_id, "Non autorizzato", show_alert=True)
+        return
+    api.answer_callback_query(cb_id)
+
+    if not rest.isdigit():
+        return
+    target = int(rest)
 
     if action == "approve":
         db.set_user_status(target, "approved")
